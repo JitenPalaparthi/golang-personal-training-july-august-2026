@@ -9,8 +9,8 @@ func main() {
 
 	// what about chars
 
-	str1 := "Hello World" // 11 chars
-	str2 := "Hello 世界"    // 8 chars
+	str1 := "Hello World" // 11 chars and 11 bytes
+	str2 := "Hello 世界"    // 8 chars but 12 bytes
 
 	// len and size
 	println("len of str1:", len(str1))
