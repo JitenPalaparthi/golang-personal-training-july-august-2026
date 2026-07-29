@@ -5,3 +5,5 @@
 - Easy to use concurrency, Concurrency to be a first class citizen 
 - No special runtime to be installed
 - Cross compilation (Various OS/ Various Arch)
+
+- Go is  statically typed(type safe), compiled, general purpose programming language.
