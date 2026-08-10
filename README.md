@@ -89,3 +89,17 @@ windows/arm64
 #cross compilation for linux
 GOOS=linux GOARCH=amd64 go build -o linux-amd64-hello .
 ```
+
+### Golang Compilation 
+
+Go Source Code --> Go Compiler compilies --> (SSA , Code optimizations ,Type eraser (For generics), constants evaluation , Dead code elimination -> In Memory IR) --> Assember(Plan9 Assembler) --> Linker (Links required dependencies + Memory mapping) --> Binary(includes the runtime) 
+
+
+.o files -> Object Files
+.so files -> shared object files
+.a files -> archive object or shared object files
+
+.o, shared libs
+dll,libdll etc
+
+
