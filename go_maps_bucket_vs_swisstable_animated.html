@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Go Maps: Bucket-Based vs Swiss Table Animation</title>
+<style>
+  :root {
+    --bg: #eef5ff;
+    --card: #ffffff;
+    --blue: #2563eb;
+    --blue2: #dbeafe;
+    --orange: #f97316;
+    --orange2: #ffedd5;
+    --purple: #7c3aed;
+    --purple2: #ede9fe;
+    --green: #16a34a;
+    --green2: #dcfce7;
+    --red: #dc2626;
+    --red2: #fee2e2;
+    --gray: #475569;
+    --dark: #0f172a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: linear-gradient(135deg, #eff6ff, #f8fafc);
+    color: var(--dark);
+    padding: 24px;
+  }
+
+  h1 {
+    text-align: center;
+    color: #1e3a8a;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: var(--gray);
+    margin-bottom: 28px;
+    font-size: 17px;
+  }
+
+  .wrapper {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 1500px;
+    margin: 0 auto;
+  }
+
+  .panel {
+    background: var(--card);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 14px 35px rgba(15, 23, 42, 0.12);
+    min-height: 740px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+  }
+
+  .panel h2 {
+    text-align: center;
+    margin: 0 0 18px;
+  }
+
+  .bucket-title { color: #c2410c; }
+  .swiss-title { color: #5b21b6; }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-bottom: 18px;
+  }
+
+  .pill {
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+  }
+
+  .hmap, .map-header {
+    width: 250px;
+    margin: 0 auto 18px;
+    padding: 14px;
+    border-radius: 14px;
+    background: var(--blue2);
+    border: 3px solid var(--blue);
+    text-align: center;
+    font-weight: bold;
+    position: relative;
+  }
+
+  .small-text {
+    font-weight: normal;
+    font-size: 12px;
+    color: var(--gray);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  .hash-line {
+    margin: 0 auto 18px;
+    width: 320px;
+    padding: 10px;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 2px dashed #94a3b8;
+    text-align: center;
+    font-family: monospace;
+    animation: pulse 2s infinite;
+  }
+
+  .bucket-array {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: center;
+  }
+
+  .bucket {
+    width: 94%;
+    background: var(--orange2);
+    border: 3px solid var(--orange);
+    border-radius: 14px;
+    padding: 12px;
+    position: relative;
+  }
+
+  .bucket:nth-child(2) {
+    animation: bucketGlow 5s infinite;
+  }
+
+  .bucket-label, .table-label {
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #9a3412;
+  }
+
+  .slots {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+  }
+
+  .slot {
+    min-height: 82px;
+    border-radius: 10px;
+    background: white;
+    border: 2px solid #fb923c;
+    text-align: center;
+    padding: 5px;
+    font-size: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slot.active {
+    animation: slotHit 5s infinite;
+  }
+
+  .tophash, .ctrl {
+    border-radius: 6px;
+    padding: 4px;
+    margin-bottom: 4px;
+    font-weight: bold;
+  }
+
+  .tophash { background: var(--red2); color: #991b1b; }
+  .key { background: var(--green2); border-radius: 6px; padding: 4px; margin-bottom: 4px; }
+  .value { background: #e0e7ff; border-radius: 6px; padding: 4px; }
+
+  .overflow-box {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #991b1b;
+    font-weight: bold;
+    animation: overflowBlink 5s infinite;
+  }
+
+  .overflow-bucket {
+    border: 2px dashed var(--red);
+    background: var(--red2);
+    border-radius: 10px;
+    padding: 10px 18px;
+  }
+
+  .moving-key {
+    position: absolute;
+    top: 116px;
+    left: 18px;
+    width: 76px;
+    padding: 8px;
+    border-radius: 10px;
+    background: var(--green);
+    color: white;
+    text-align: center;
+    font-weight: bold;
+    z-index: 5;
+    animation: moveToBucket 5s infinite;
+  }
+
+  .swiss-table {
+    width: 94%;
+    margin: 0 auto 16px;
+    background: var(--purple2);
+    border: 3px solid var(--purple);
+    border-radius: 14px;
+    padding: 12px;
+    animation: tableGlow 5s infinite;
+  }
+
+  .table-label { color: #5b21b6; }
+
+  .groups {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .group {
+    background: #faf5ff;
+    border: 2px solid #a855f7;
+    border-radius: 12px;
+    padding: 10px;
+  }
+
+  .group:nth-child(1) {
+    animation: groupGlow 5s infinite;
+  }
+
+  .group-label {
+    font-weight: bold;
+    color: #6b21a8;
+    margin-bottom: 7px;
+  }
+
+  .control-row, .swiss-slots {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+  }
+
+  .control-byte {
+    background: #fef3c7;
+    border: 2px solid #f59e0b;
+    border-radius: 8px;
+    padding: 7px 3px;
+    text-align: center;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 12px;
+  }
+
+  .control-byte.match {
+    animation: ctrlMatch 5s infinite;
+  }
+
+  .swiss-slot {
+    margin-top: 7px;
+    min-height: 58px;
+    background: white;
+    border: 2px solid #c084fc;
+    border-radius: 9px;
+    padding: 6px;
+    text-align: center;
+    font-size: 12px;
+  }
+
+  .swiss-slot.match {
+    animation: swissSlotHit 5s infinite;
+  }
+
+  .swiss-key {
+    background: var(--green2);
+    border-radius: 6px;
+    padding: 4px;
+    margin-bottom: 4px;
+  }
+
+  .swiss-value {
+    background: #e0e7ff;
+    border-radius: 6px;
+    padding: 4px;
+  }
+
+  .moving-hash {
+    position: absolute;
+    top: 116px;
+    left: 24px;
+    width: 110px;
+    padding: 8px;
+    border-radius: 10px;
+    background: var(--purple);
+    color: white;
+    text-align: center;
+    font-weight: bold;
+    z-index: 5;
+    animation: moveToGroup 5s infinite;
+  }
+
+  .note {
+    max-width: 1500px;
+    margin: 28px auto 0;
+    background: white;
+    border-radius: 16px;
+    padding: 20px;
+    line-height: 1.6;
+    border-left: 7px solid var(--blue);
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+  }
+
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 18px;
+  }
+
+  .comparison div {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.04); opacity: 0.85; }
+  }
+
+  @keyframes bucketGlow {
+    0%, 25%, 100% { box-shadow: none; }
+    35%, 65% { box-shadow: 0 0 0 5px rgba(249, 115, 22, 0.25); }
+  }
+
+  @keyframes slotHit {
+    0%, 40%, 100% { background: white; transform: scale(1); }
+    50%, 70% { background: #dcfce7; transform: scale(1.05); }
+  }
+
+  @keyframes overflowBlink {
+    0%, 65%, 100% { opacity: 0.35; transform: translateX(0); }
+    75%, 90% { opacity: 1; transform: translateX(4px); }
+  }
+
+  @keyframes moveToBucket {
+    0% { transform: translate(0, 0); opacity: 0; }
+    12% { opacity: 1; }
+    35% { transform: translate(210px, 145px); opacity: 1; }
+    65% { transform: translate(365px, 250px); opacity: 1; }
+    100% { transform: translate(365px, 250px); opacity: 0; }
+  }
+
+  @keyframes tableGlow {
+    0%, 100% { box-shadow: none; }
+    30%, 70% { box-shadow: 0 0 0 5px rgba(124, 58, 237, 0.22); }
+  }
+
+  @keyframes groupGlow {
+    0%, 25%, 100% { box-shadow: none; }
+    35%, 65% { box-shadow: 0 0 0 5px rgba(168, 85, 247, 0.22); }
+  }
+
+  @keyframes ctrlMatch {
+    0%, 35%, 100% { background: #fef3c7; transform: scale(1); }
+    45%, 70% { background: #bbf7d0; transform: scale(1.12); }
+  }
+
+  @keyframes swissSlotHit {
+    0%, 45%, 100% { background: white; transform: scale(1); }
+    55%, 75% { background: #dcfce7; transform: scale(1.06); }
+  }
+
+  @keyframes moveToGroup {
+    0% { transform: translate(0, 0); opacity: 0; }
+    12% { opacity: 1; }
+    35% { transform: translate(220px, 130px); opacity: 1; }
+    58% { transform: translate(410px, 190px); opacity: 1; }
+    100% { transform: translate(410px, 190px); opacity: 0; }
+  }
+
+  @media (max-width: 1100px) {
+    .wrapper, .comparison { grid-template-columns: 1fr; }
+    .panel { min-height: 720px; }
+  }
+</style>
+</head>
+<body>
+  <h1>Go Maps Internals: Bucket-Based vs Swiss Table Style</h1>
+  <div class="subtitle">Animated teaching graphic for explaining older bucket maps and modern Swiss-table-style organization</div>
+
+  <div class="wrapper">
+    <section class="panel">
+      <h2 class="bucket-title">Older Bucket-Based Map</h2>
+      <div class="legend">
+        <span class="pill">hmap</span>
+        <span class="pill">bucket array</span>
+        <span class="pill">8 slots per bucket</span>
+        <span class="pill">tophash</span>
+        <span class="pill">overflow bucket</span>
+      </div>
+
+      <div class="moving-key">key = "go"</div>
+
+      <div class="hmap">
+        hmap
+        <div class="small-text">count, B, buckets, oldbuckets, hash0</div>
+      </div>
+
+      <div class="hash-line">hash(key) → bucketIndex = hash &amp; mask</div>
+
+      <div class="bucket-array">
+        <div class="bucket">
+          <div class="bucket-label">Bucket 0</div>
+          <div class="slots">
+            <div class="slot"><div class="tophash">TH</div><div class="key">k1</div><div class="value">v1</div></div>
+            <div class="slot"><div class="tophash">TH</div><div class="key">k2</div><div class="value">v2</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+          </div>
+        </div>
+
+        <div class="bucket">
+          <div class="bucket-label">Bucket 1 selected</div>
+          <div class="slots">
+            <div class="slot"><div class="tophash">A7</div><div class="key">k3</div><div class="value">v3</div></div>
+            <div class="slot"><div class="tophash">B2</div><div class="key">k4</div><div class="value">v4</div></div>
+            <div class="slot"><div class="tophash">11</div><div class="key">k5</div><div class="value">v5</div></div>
+            <div class="slot"><div class="tophash">9C</div><div class="key">k6</div><div class="value">v6</div></div>
+            <div class="slot"><div class="tophash">E1</div><div class="key">k7</div><div class="value">v7</div></div>
+            <div class="slot"><div class="tophash">7F</div><div class="key">k8</div><div class="value">v8</div></div>
+            <div class="slot"><div class="tophash">22</div><div class="key">k9</div><div class="value">v9</div></div>
+            <div class="slot active"><div class="tophash">4D</div><div class="key">go</div><div class="value">42</div></div>
+          </div>
+          <div class="overflow-box">collision/full bucket → <div class="overflow-bucket">overflow bucket</div></div>
+        </div>
+
+        <div class="bucket">
+          <div class="bucket-label">Bucket 2</div>
+          <div class="slots">
+            <div class="slot"><div class="tophash">TH</div><div class="key">k10</div><div class="value">v10</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+            <div class="slot"><div class="tophash">--</div><div class="key">empty</div><div class="value">empty</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="swiss-title">Swiss Table Style Map</h2>
+      <div class="legend">
+        <span class="pill">table</span>
+        <span class="pill">group</span>
+        <span class="pill">control bytes</span>
+        <span class="pill">slots</span>
+        <span class="pill">probe sequence</span>
+      </div>
+
+      <div class="moving-hash">H1 + H2</div>
+
+      <div class="map-header">
+        map directory / table
+        <div class="small-text">hash splits into table/group choice and control-byte fingerprint</div>
+      </div>
+
+      <div class="hash-line">hash(key) → H1 selects group, H2 matches control byte</div>
+
+      <div class="swiss-table">
+        <div class="table-label">Table 0</div>
+        <div class="groups">
+          <div class="group">
+            <div class="group-label">Group 0 selected</div>
+            <div class="control-row">
+              <div class="control-byte">80</div>
+              <div class="control-byte">2A</div>
+              <div class="control-byte match">4D</div>
+              <div class="control-byte">7B</div>
+              <div class="control-byte">FE</div>
+              <div class="control-byte">19</div>
+              <div class="control-byte">80</div>
+              <div class="control-byte">80</div>
+            </div>
+            <div class="swiss-slots">
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k1</div><div class="swiss-value">v1</div></div>
+              <div class="swiss-slot match"><div class="swiss-key">go</div><div class="swiss-value">42</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k2</div><div class="swiss-value">v2</div></div>
+              <div class="swiss-slot"><div class="swiss-key">deleted</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k3</div><div class="swiss-value">v3</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">Group 1</div>
+            <div class="control-row">
+              <div class="control-byte">35</div><div class="control-byte">51</div><div class="control-byte">80</div><div class="control-byte">80</div>
+              <div class="control-byte">0F</div><div class="control-byte">AC</div><div class="control-byte">80</div><div class="control-byte">80</div>
+            </div>
+            <div class="swiss-slots">
+              <div class="swiss-slot"><div class="swiss-key">k4</div><div class="swiss-value">v4</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k5</div><div class="swiss-value">v5</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k6</div><div class="swiss-value">v6</div></div>
+              <div class="swiss-slot"><div class="swiss-key">k7</div><div class="swiss-value">v7</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+              <div class="swiss-slot"><div class="swiss-key">empty</div><div class="swiss-value">--</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="note">
+    <strong>Teaching Summary</strong>
+    <div class="comparison">
+      <div>
+        <strong>Bucket-based map:</strong><br />
+        A hash chooses a bucket. Each bucket has 8 slots. Each slot stores key/value data and tophash metadata. If many keys land in the same bucket, an overflow bucket is linked.
+      </div>
+      <div>
+        <strong>Swiss-table-style map:</strong><br />
+        A hash is split. One part guides table/group probing. A smaller fingerprint is stored in control bytes. Lookup checks control bytes first, then compares keys only for possible matches.
+      </div>
+    </div>
+    <p>
+      <strong>GIF conversion:</strong> Yes, you can convert this HTML animation into a GIF. The most reliable method is to open the HTML in Chrome, record the screen or browser tab, then convert the video to GIF using <code>ffmpeg</code> or an online/video editor. For best quality, export a short MP4 first and then convert to GIF.
+    </p>
+  </div>
+</body>
+</html>

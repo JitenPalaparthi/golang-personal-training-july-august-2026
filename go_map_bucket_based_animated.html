@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Go Map Bucket Based Implementation - Animated</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: linear-gradient(135deg, #eef6ff, #f8fafc);
+      color: #0f172a;
+      overflow-x: hidden;
+    }
+    header {
+      text-align: center;
+      padding: 26px 16px 10px;
+    }
+    h1 {
+      margin: 0;
+      color: #1d4ed8;
+      font-size: 34px;
+    }
+    .subtitle {
+      margin-top: 8px;
+      color: #475569;
+      font-size: 17px;
+    }
+    .stage {
+      width: min(1180px, 96vw);
+      margin: 18px auto 30px;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.15);
+      padding: 24px;
+      position: relative;
+      min-height: 690px;
+      border: 1px solid #dbeafe;
+    }
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      padding: 6px 12px;
+    }
+    .dot { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+    .dot-blue { background: #bfdbfe; border: 1px solid #2563eb; }
+    .dot-orange { background: #fed7aa; border: 1px solid #f97316; }
+    .dot-green { background: #bbf7d0; border: 1px solid #16a34a; }
+    .dot-red { background: #fecaca; border: 1px solid #dc2626; }
+
+    .row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .hmap {
+      width: 260px;
+      background: #dbeafe;
+      border: 3px solid #2563eb;
+      border-radius: 16px;
+      padding: 16px;
+      animation: popIn 0.8s ease both;
+    }
+    .hmap h2, .bucket h2 {
+      margin: 0 0 12px;
+      text-align: center;
+    }
+    .field {
+      background: white;
+      border-left: 5px solid #2563eb;
+      border-radius: 8px;
+      padding: 8px;
+      margin: 8px 0;
+      font-size: 14px;
+    }
+    .buckets-area {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(330px, 1fr));
+      gap: 18px;
+    }
+    .bucket {
+      background: #fff7ed;
+      border: 3px solid #f97316;
+      border-radius: 16px;
+      padding: 14px;
+      position: relative;
+      min-height: 185px;
+      animation: fadeUp 0.8s ease both;
+    }
+    .bucket:nth-child(2) { animation-delay: .25s; }
+    .bucket:nth-child(3) { animation-delay: .45s; }
+    .bucket:nth-child(4) { animation-delay: .65s; }
+    .bucket-title {
+      color: #c2410c;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    .slots {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 5px;
+    }
+    .slot {
+      background: white;
+      border: 2px solid #fb923c;
+      border-radius: 10px;
+      min-height: 82px;
+      padding: 5px;
+      text-align: center;
+      font-size: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .top {
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 5px;
+      padding: 2px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .key {
+      background: #dcfce7;
+      border-radius: 5px;
+      padding: 3px 2px;
+      margin-bottom: 3px;
+    }
+    .val {
+      background: #e0e7ff;
+      border-radius: 5px;
+      padding: 3px 2px;
+    }
+    .empty .key, .empty .val { background: #f1f5f9; color: #94a3b8; }
+    .empty .top { background: #f8fafc; color: #94a3b8; }
+
+    .key-token {
+      position: absolute;
+      left: 38px;
+      top: 560px;
+      width: 105px;
+      height: 46px;
+      border-radius: 999px;
+      background: #bbf7d0;
+      border: 3px solid #16a34a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #14532d;
+      box-shadow: 0 8px 18px rgba(22, 163, 74, .22);
+      animation: keyMove 10s ease-in-out infinite;
+      z-index: 5;
+    }
+    .hash-box {
+      position: absolute;
+      left: 178px;
+      top: 554px;
+      background: #eff6ff;
+      border: 2px dashed #2563eb;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      width: 300px;
+      animation: hashPulse 10s ease-in-out infinite;
+    }
+    .step-box {
+      position: absolute;
+      right: 28px;
+      bottom: 22px;
+      width: 410px;
+      background: #f8fafc;
+      border-left: 6px solid #1d4ed8;
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    .step-text::after {
+      content: "1. Key is hashed using map hash seed.";
+      animation: stepText 10s infinite;
+    }
+    .highlight-select {
+      animation: selectBucket 10s infinite;
+    }
+    .highlight-slot {
+      animation: selectSlot 10s infinite;
+    }
+    .collision {
+      animation: collisionPulse 10s infinite;
+    }
+    .overflow-wrap {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .overflow-arrow {
+      font-size: 26px;
+      color: #dc2626;
+      font-weight: bold;
+      animation: arrowBlink 10s infinite;
+    }
+    .overflow-bucket {
+      background: #fee2e2;
+      border: 3px dashed #dc2626;
+      color: #7f1d1d;
+      border-radius: 14px;
+      padding: 10px;
+      text-align: center;
+      min-width: 230px;
+      animation: overflowShow 10s infinite;
+      opacity: .35;
+    }
+    .formula {
+      text-align: center;
+      margin-top: 18px;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: 12px;
+      color: #334155;
+      font-size: 15px;
+    }
+    .note {
+      width: min(1180px, 96vw);
+      margin: 0 auto 34px;
+      background: #ffffff;
+      border-left: 6px solid #2563eb;
+      border-radius: 14px;
+      padding: 18px 22px;
+      line-height: 1.65;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+    }
+
+    @keyframes popIn {
+      from { transform: scale(.92); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    @keyframes fadeUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes keyMove {
+      0%, 8% { left: 38px; top: 560px; }
+      20%, 28% { left: 205px; top: 470px; }
+      40%, 48% { left: 568px; top: 118px; }
+      60%, 68% { left: 760px; top: 224px; }
+      80%, 88% { left: 865px; top: 405px; }
+      100% { left: 38px; top: 560px; }
+    }
+    @keyframes hashPulse {
+      0%, 16% { opacity: .25; transform: scale(.98); }
+      20%, 36% { opacity: 1; transform: scale(1); }
+      42%, 100% { opacity: .45; }
+    }
+    @keyframes selectBucket {
+      0%, 34% { box-shadow: none; transform: scale(1); }
+      40%, 54% { box-shadow: 0 0 0 6px rgba(37, 99, 235, .22); transform: scale(1.02); }
+      60%, 100% { box-shadow: none; transform: scale(1); }
+    }
+    @keyframes selectSlot {
+      0%, 52% { box-shadow: none; transform: scale(1); }
+      58%, 74% { box-shadow: 0 0 0 5px rgba(22, 163, 74, .28); transform: scale(1.08); }
+      80%, 100% { box-shadow: none; transform: scale(1); }
+    }
+    @keyframes collisionPulse {
+      0%, 66% { box-shadow: none; }
+      70%, 82% { box-shadow: 0 0 0 5px rgba(220, 38, 38, .28); }
+      88%, 100% { box-shadow: none; }
+    }
+    @keyframes overflowShow {
+      0%, 70% { opacity: .25; transform: translateX(-10px); }
+      76%, 92% { opacity: 1; transform: translateX(0); }
+      100% { opacity: .35; }
+    }
+    @keyframes arrowBlink {
+      0%, 72% { opacity: .2; }
+      76%, 92% { opacity: 1; }
+      100% { opacity: .3; }
+    }
+    @keyframes stepText {
+      0%, 18% { content: "1. Key is hashed using map hash seed."; }
+      20%, 38% { content: "2. Lower hash bits select the bucket index."; }
+      40%, 58% { content: "3. Go checks the selected bucket."; }
+      60%, 76% { content: "4. Tophash helps quickly scan 8 slots."; }
+      78%, 94% { content: "5. If bucket is full, overflow bucket is linked."; }
+      96%, 100% { content: "Animation repeats: hash → bucket → slot → overflow."; }
+    }
+
+    @media (max-width: 900px) {
+      .row { flex-direction: column; }
+      .hmap { width: 100%; }
+      .buckets-area { grid-template-columns: 1fr; width: 100%; }
+      .key-token, .hash-box, .step-box { position: static; margin-top: 18px; }
+      .key-token { width: 120px; }
+      .stage { min-height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Go Map Internals — Bucket Based Implementation</h1>
+    <div class="subtitle">Animated view of old bucket-based Go map design: hmap, buckets, 8 slots, tophash, collisions and overflow</div>
+  </header>
+
+  <main class="stage">
+    <div class="legend">
+      <span><i class="dot dot-blue"></i> hmap metadata</span>
+      <span><i class="dot dot-orange"></i> bucket</span>
+      <span><i class="dot dot-green"></i> key/value slot</span>
+      <span><i class="dot dot-red"></i> overflow bucket</span>
+    </div>
+
+    <div class="row">
+      <section class="hmap">
+        <h2>hmap</h2>
+        <div class="field"><b>count</b>: number of entries</div>
+        <div class="field"><b>B</b>: bucket power</div>
+        <div class="field"><b>buckets</b>: pointer to bucket array</div>
+        <div class="field"><b>oldbuckets</b>: used during growth</div>
+        <div class="field"><b>hash0</b>: random hash seed</div>
+      </section>
+
+      <section class="buckets-area">
+        <div class="bucket">
+          <div class="bucket-title">Bucket 0</div>
+          <div class="slots">
+            <div class="slot"><div class="top">91</div><div class="key">k1</div><div class="val">v1</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+          </div>
+        </div>
+
+        <div class="bucket highlight-select">
+          <div class="bucket-title">Bucket 1 — Selected</div>
+          <div class="slots">
+            <div class="slot"><div class="top">42</div><div class="key">go</div><div class="val">100</div></div>
+            <div class="slot"><div class="top">8A</div><div class="key">rust</div><div class="val">200</div></div>
+            <div class="slot highlight-slot"><div class="top">B7</div><div class="key">new</div><div class="val">300</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+          </div>
+        </div>
+
+        <div class="bucket">
+          <div class="bucket-title">Bucket 2</div>
+          <div class="slots">
+            <div class="slot"><div class="top">A1</div><div class="key">x</div><div class="val">10</div></div>
+            <div class="slot"><div class="top">C3</div><div class="key">y</div><div class="val">20</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+            <div class="slot empty"><div class="top">--</div><div class="key">empty</div><div class="val">empty</div></div>
+          </div>
+        </div>
+
+        <div class="bucket">
+          <div class="bucket-title">Bucket 3 — Collision Example</div>
+          <div class="slots">
+            <div class="slot collision"><div class="top">11</div><div class="key">a</div><div class="val">1</div></div>
+            <div class="slot collision"><div class="top">22</div><div class="key">b</div><div class="val">2</div></div>
+            <div class="slot collision"><div class="top">33</div><div class="key">c</div><div class="val">3</div></div>
+            <div class="slot collision"><div class="top">44</div><div class="key">d</div><div class="val">4</div></div>
+            <div class="slot collision"><div class="top">55</div><div class="key">e</div><div class="val">5</div></div>
+            <div class="slot collision"><div class="top">66</div><div class="key">f</div><div class="val">6</div></div>
+            <div class="slot collision"><div class="top">77</div><div class="key">g</div><div class="val">7</div></div>
+            <div class="slot collision"><div class="top">88</div><div class="key">h</div><div class="val">8</div></div>
+          </div>
+          <div class="overflow-wrap">
+            <div class="overflow-arrow">➜</div>
+            <div class="overflow-bucket">Overflow Bucket<br/>more key/value pairs</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="key-token">key = "new"</div>
+    <div class="hash-box">
+      <b>Hash(key)</b><br />
+      bucket index = hash &amp; bucketMask<br />
+      tophash = upper hash bits
+    </div>
+    <div class="step-box">
+      <b>Animated Steps</b><br />
+      <span class="step-text"></span>
+    </div>
+
+    <div class="formula">
+      Bucket count = 2<sup>B</sup> &nbsp; | &nbsp; Each bucket has 8 slots &nbsp; | &nbsp; Overflow bucket is used when many keys land in the same bucket
+    </div>
+  </main>
+
+  <section class="note">
+    <b>Teaching Summary:</b> In the older bucket-based Go map design, the runtime keeps an <b>hmap</b> header. The hash of a key selects a bucket from the bucket array. Each bucket has <b>8 slots</b>. Every slot stores a key/value pair, and the bucket also keeps <b>tophash</b> metadata to quickly reject non-matching slots. If too many keys land in the same bucket, Go links an <b>overflow bucket</b>. During growth, Go gradually moves entries from old buckets to new buckets.
+  </section>
+</body>
+</html>

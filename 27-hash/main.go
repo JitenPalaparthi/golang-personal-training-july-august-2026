@@ -40,6 +40,7 @@ func main() {
 	fmt.Println("bucket index:", bktIndex)
 	indexBct := h2 & (8 - 1)
 	fmt.Println("index inside bucket:", indexBct)
+	println(128 * (7.0 / 8.0))
 
 }
 

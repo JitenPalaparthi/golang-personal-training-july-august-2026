@@ -103,3 +103,16 @@ Go Source Code --> Go Compiler compilies --> (SSA , Code optimizations ,Type era
 dll,libdll etc
 
 
+SIMD --> Single Instruction Multiple Data
+GPUS
+
+A -> 100*100
+B -> 100*100
+C -> A+B
+loop->from 0 to 100 of A is added to 0 to 100 of B
+C
+A[0][0] --> A[100][100]
+B[0][0] --> B[100][100]
+
+16 groups -> 8 slots --> 128 
+128*(7/8)
