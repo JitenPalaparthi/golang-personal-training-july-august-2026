@@ -21,7 +21,17 @@ func main() {
 	fops2 := NewFileOps("")
 	_, err = fmt.Fprintln(fops2, str)
 	if err != nil {
-		fmt.Println(err)
+		//fmt.Println(err)
+
+		fileErr, ok := err.(*FileError)
+		if ok {
+			fmt.Println("These are the error details from the object")
+			fmt.Println("Error code:", fileErr.Code)
+			fmt.Println("Error Message:", fileErr.Msg)
+		} else {
+			fmt.Println(err.Error())
+		}
+
 	}
 	//fmt.Fprintln(fops, "I am trying to learn Golang, Wish me the best!")
 }
