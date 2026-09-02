@@ -2,8 +2,8 @@ package main
 
 func main() {
 
-	r1 := NewRect(123.43, 76.45)
-	r2 := NewRect(123.43, 76.45)
+	r1 := NewRectC(123.43, 76.45)
+	r2 := NewRectC(123.43, 76.45)
 	r3 := NewRect(123.43, 76.45)
 	s1 := NewSquare(56.6)
 	s2 := NewSquare(13.6)
