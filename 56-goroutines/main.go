@@ -1,11 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
+	"time"
 )
 
 func main() {
-
 	runtime.GOMAXPROCS(3)
 	go func() { // main.func1
 		println("Hello first Goroutine")
@@ -18,6 +19,30 @@ func main() {
 			println(a)
 			a, b = b, a+b
 		}
+	}()
+
+	go func() {
+		go func() {
+			fmt.Println("Start time -->", time.Now())
+			time.Sleep(time.Second * 3) // block the thread for 10 seconds
+			fmt.Println("End Time -->", time.Now())
+		}()
+		i := 1
+		for {
+
+			if i%2 == 0 {
+				println("Even:", i)
+			}
+
+			if i >= 20 {
+				//return
+				//break
+				runtime.Goexit() // it exits gracefully
+			}
+
+			i++
+		}
+
 	}()
 	println("Hello World")
 	//time.Sleep(time.Millisecond * 1)
