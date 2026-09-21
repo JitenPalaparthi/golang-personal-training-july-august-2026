@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Go Scheduler Training Lab — G-M-P, Netpoller, Global Queue & Work Stealing</title>
+<style>
+:root{--bg:#07111f;--p:#0d1b2d;--p2:#10253d;--line:#2b4d6b;--txt:#edf6ff;--mut:#9db3c9;--blue:#59d4ff;--green:#67e6a3;--violet:#c494ff;--yellow:#ffd36a;--red:#ff7887}
+*{box-sizing:border-box} body{margin:0;background:#07111f;color:var(--txt);font-family:Inter,system-ui,Segoe UI,Arial}
+header{padding:18px 22px;background:#0a1728;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:22px}.sub{margin-top:5px;color:var(--mut);font-size:12px}
+.controls{display:flex;gap:7px;flex-wrap:wrap;padding:12px 22px;background:#091523;position:sticky;top:0;z-index:3;border-bottom:1px solid #203c55}
+button{border:1px solid #3a6384;background:#15324d;color:white;border-radius:8px;padding:8px 11px;cursor:pointer}
+button:hover{background:#214967}.primary{border-color:#52bde2}.warn{border-color:#c99b45}
+main{padding:14px 22px 30px}.stats{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;margin-bottom:10px}
+.card,.stat{background:var(--p);border:1px solid var(--line);border-radius:11px}.stat{text-align:center;padding:8px}.stat b{font-size:18px;display:block}.stat small{color:var(--mut)}
+.note{padding:10px 12px;background:#0d2136;border-left:4px solid var(--blue);font-size:12px;line-height:1.5;margin-bottom:10px}
+.layout{display:grid;grid-template-columns:1.15fr 3fr 1.15fr;gap:10px}.card{padding:10px}.title{font-weight:800;font-size:13px}.help{font-size:10px;color:var(--mut);margin:4px 0 7px}
+.queue{display:flex;flex-wrap:wrap;gap:4px;min-height:38px}.g,.mchip{padding:4px 6px;border-radius:6px;font:bold 10px ui-monospace,monospace;border:1px solid #427291;background:#153955}
+.g.run{background:#174b39;border-color:#54b985}.g.io{background:#39264f;border-color:#8f65bb}.mchip{background:#58431e;border-color:#b88c3e}
+.middle{display:grid;gap:10px}.ps{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.pc{background:#0a1827;border:1px solid #385a75;border-radius:10px;padding:8px;min-height:160px}.ph{display:flex;justify-content:space-between;font:bold 12px ui-monospace,monospace}.ph span{color:var(--blue)}
+.slot{margin:6px 0;padding:5px;border:1px dashed #38536b;border-radius:7px;min-height:29px;font-size:10px}.slot b{color:#8ddfff}
+.running{border-top:1px dashed #38536b;margin-top:7px;padding-top:6px;font-size:10px}
+.side{display:grid;gap:10px}.side .card{min-height:135px}.flow{margin-top:10px;padding:10px 12px;background:#071a2a;border:1px solid var(--line);border-radius:10px;font:12px ui-monospace,monospace;line-height:1.6}
+.lesson{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px}.lesson .card{font-size:12px;line-height:1.5}.lesson b{color:#dff4ff}
+.log{height:180px;overflow:auto;background:#040b12;border:1px solid #203a52;border-radius:10px;padding:8px;font:10px ui-monospace,monospace;color:#b8cee2;margin-top:8px}
+.log div{padding:2px 0}.ok{color:var(--green)}.vio{color:var(--violet)}.yel{color:var(--yellow)}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}.ps{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head><body>
+<header><h1>Go Runtime Scheduler — Training Animation</h1>
+<div class="sub">4 Ps • G/M/P • runnext • local run queues • global run queue • work stealing • netpoller • blocking syscalls • thread compensation</div></header>
+
+<div class="controls">
+<button id="play" class="primary">▶ Auto Run</button><button id="step">Step</button>
+<button id="spawn">go f() × 8</button><button id="steal">▶ Work Stealing Demo</button>
+<button id="netdemo">▶ Netpoller Demo</button><button id="overflow">▶ Local Queue Overflow</button>
+<button id="globaldemo">▶ Global Queue Scenario</button><button id="block" class="warn">▶ Blocking Syscall Demo</button>
+<button id="reset">Reset</button>
+</div>
+
+<main>
+<div class="note"><b>Accuracy note:</b> This is a teaching visualization of the current Go runtime concepts, not a cycle-accurate runtime simulator.
+A normal <code>go f()</code> created while executing with a P is submitted through that P's local runnable machinery—preferentially <code>runnext</code>—not through the global queue first.
+The number of Ps stays at <b>4</b> here (think <code>GOMAXPROCS=4</code>); blocking OS threads may cause other/new Ms to run those Ps, but blocking does not create extra Ps.</div>
+
+<div class="stats">
+<div class="stat"><b id="gcount">0</b><small>Live Gs</small></div><div class="stat"><b>4</b><small>Ps</small></div>
+<div class="stat"><b id="mcount">4</b><small>Ms</small></div><div class="stat"><b id="running">0</b><small>Running</small></div>
+<div class="stat"><b id="runnable">0</b><small>Runnable</small></div><div class="stat"><b id="iowait">0</b><small>Netpoll Wait</small></div>
+<div class="stat"><b id="blockedn">0</b><small>Blocked Ms</small></div>
+</div>
+
+<div class="layout">
+<div class="side">
+ <div class="card"><div class="title">🌐 Netpoller Waiters</div><div class="help">G is parked; socket readiness is watched by the OS poller.</div><div id="netq" class="queue"></div></div>
+ <div class="card"><div class="title">📨 Netpoll Ready List</div><div class="help">Ready Gs become runnable; scheduler injects them into runnable queues.</div><div id="netready" class="queue"></div></div>
+</div>
+
+<div class="middle">
+ <div class="card"><div class="title">🌍 Global Runnable Queue</div>
+ <div class="help">Not the normal first stop for <code>go f()</code>. Used by specific runtime paths, overflow/batching, injection without a current P, and fairness.</div><div id="global" class="queue"></div></div>
+ <div id="ps" class="ps"></div>
+</div>
+
+<div class="side">
+ <div class="card"><div class="title">⛔ Ms Blocked in Syscalls</div><div class="help">Their Ps can be detached and used by another M.</div><div id="blocked" class="queue"></div></div>
+ <div class="card"><div class="title">🧵 Spare / Idle Ms</div><div class="help">Runtime can reuse parked threads; the exact OS-thread lifecycle is runtime-managed.</div><div id="idle" class="queue"></div></div>
+</div>
+</div>
+
+<div class="flow" id="flow">Normal creation: running G → go f() → current P.runnext/local runq → M executes G</div>
+
+<div class="lesson">
+<div class="card"><b>1. Normal goroutine creation</b><br>
+The compiler lowers a <code>go</code> statement to runtime goroutine creation. The runtime calls <code>runqput(..., next=true)</code>, which prefers the current P's <code>runnext</code>. If occupied, the displaced G goes toward the regular local run queue.</div>
+
+<div class="card"><b>2. When does work reach the global queue?</b><br>
+Important examples: <b>(a)</b> a P's local run queue is full—Go's slow path moves a batch (roughly half the local queue plus the new G) to the global queue; <b>(b)</b> runtime injection has no current P; <b>(c)</b> some injected runnable work is placed globally to wake idle Ps. The scheduler also periodically checks global work for fairness.</div>
+
+<div class="card"><b>3. Work stealing</b><br>
+If a P has no runnable work, a spinning M searches other Ps. It can steal runnable work from another P's local queue (roughly half in the common queue-steal path), balancing work without routing everything through the global queue.</div>
+
+<div class="card"><b>4. Netpoller</b><br>
+For pollable network I/O, the G waits instead of tying up one OS thread per connection. OS-specific polling (for example epoll/kqueue/IOCP) reports readiness. The runtime turns waiting Gs runnable and injects them back into scheduling.</div>
+
+<div class="card"><b>5. Blocking syscall</b><br>
+A blocking syscall is different from pollable network waiting. If an M is stuck in a syscall, its P can be handed off so another M can continue executing Go code. The runtime may wake or create an M when necessary.</div>
+
+<div class="card"><b>6. P count vs M count</b><br>
+Ps represent the resources required to execute Go code in parallel and are governed by <code>GOMAXPROCS</code>. Ms are OS threads. The runtime may have more Ms than Ps because some Ms can be blocked in syscalls or otherwise occupied.</div>
+</div>
+
+<h3>Runtime Event Log</h3><div id="log" class="log"></div>
+</main>
+
+<script>
+const S={tick:0,nextG:1,playing:false,global:[],net:[],netready:[],blocked:[],idle:[],mCount:4,Ps:[]};
+for(let i=0;i<4;i++)S.Ps.push({id:i,m:i+1,runnext:null,q:[],running:null});
+const $=id=>document.getElementById(id);
+function newG(work=3){return{id:S.nextG++,work,state:'runnable'}}
+function chip(g,c=''){return `<span class="g ${c}">G${g.id}</span>`}
+function log(msg,cls='ok'){let d=document.createElement('div');d.innerHTML=`t${S.tick} <span class="${cls}">→ ${msg}</span>`;$('log').prepend(d)}
+function putLocal(p,g,next=true){
+ if(next){
+   if(!p.runnext){p.runnext=g;log(`G${g.id} → P${p.id}.runnext (normal go statement path)`);return}
+   let old=p.runnext;p.runnext=g;g=old;log(`P${p.id}.runnext replaced; G${g.id} moves toward local runq`)}
+ // visual queue capacity is deliberately tiny (8) so overflow can be demonstrated; real runtime capacity is larger.
+ if(p.q.length<8){p.q.push(g);return}
+ let n=Math.floor(p.q.length/2), batch=p.q.splice(0,n);batch.push(g);S.global.push(...batch);
+ log(`P${p.id} local runq full → batch of ${batch.length} Gs moved to GLOBAL queue`,'yel');
+}
+function spawn(n=8){let p=S.Ps.find(x=>x.running)||S.Ps[0];for(let i=0;i<n;i++)putLocal(p,newG(2+Math.floor(Math.random()*4)),true);render()}
+function pick(p){
+ if(p.runnext){let g=p.runnext;p.runnext=null;return g}
+ if(p.q.length)return p.q.shift();
+ if(S.global.length){let g=S.global.shift(); // simplified batch acquisition for display
+   if(S.global.length){let take=Math.min(2,S.global.length);p.q.push(...S.global.splice(0,take));}
+   log(`P${p.id} takes runnable work from GLOBAL queue`,'yel');return g}
+ return null
+}
+function stealFor(p){
+ let donors=S.Ps.filter(x=>x!==p && x.q.length>1).sort((a,b)=>b.q.length-a.q.length);
+ if(!donors.length)return false;let d=donors[0],n=Math.ceil(d.q.length/2),batch=d.q.splice(0,n);
+ let first=batch.shift();p.q.push(...batch);p.running=first;
+ log(`WORK STEAL: P${p.id} steals ~half from P${d.id}; G${first.id} runs here`,'vio');
+ $('flow').textContent=`Work stealing: P${p.id} empty → inspect P${d.id} → steal runnable Gs from victim local queue → execute`;
+ return true
+}
+function schedule(p){if(!p.m||p.running)return;if(!(p.running=pick(p)))stealFor(p)}
+function tick(){
+ S.tick++;
+ if(S.net.length && S.tick%3===0){
+   let n=Math.min(2,S.net.length),a=S.net.splice(0,n);S.netready.push(...a);
+   log(`NETPOLLER: OS reports ${n} fd(s) ready; waiting G(s) become runnable`,'vio');
+   $('flow').textContent='Network wait → G parked → OS poller reports readiness → G runnable → injected into scheduler';
+ }
+ if(S.netready.length){
+   let p=S.Ps.slice().sort((a,b)=>(a.q.length+(a.runnext?1:0))-(b.q.length+(b.runnext?1:0)))[0];
+   let g=S.netready.shift();putLocal(p,g,false);log(`Netpoll-ready G${g.id} injected into P${p.id} local runq`);
+ }
+ if(S.blocked.length && S.tick%4===0){let m=S.blocked.shift();S.idle.push(m);log(`M${m} returns from syscall and becomes reusable`)}
+ S.Ps.forEach(p=>{
+   if(!p.m){
+    let m=S.idle.shift();
+    if(!m){m=++S.mCount;log(`runtime needs an M for P${p.id} → create M${m}`,'yel')}
+    p.m=m;log(`P${p.id} attached to M${m}`)}
+   schedule(p);
+   if(p.running){
+    p.running.work--;
+    if(p.running.work<=0){log(`G${p.running.id} completes on P${p.id}/M${p.m}`);p.running=null}
+   }
+ });
+ render()
+}
+function netDemo(){
+ let p=S.Ps[0];if(!p.running){schedule(p)};let g=p.running||p.runnext||p.q.shift()||newG();
+ if(p.running===g)p.running=null;if(p.runnext===g)p.runnext=null;
+ S.net.push(g);log(`G${g.id} performs pollable network I/O; not ready → G parked, M remains available`,'vio');
+ $('flow').textContent=`G${g.id} → network fd not ready → park G → netpoller/OS watches fd → M can execute other Gs`;
+ render()
+}
+function stealingDemo(){
+ S.Ps.forEach(p=>{p.q=[];p.runnext=null;p.running=null});
+ for(let i=0;i<12;i++)S.Ps[0].q.push(newG(4));
+ log('Demo setup: P0 has 12 runnable Gs; P1-P3 are empty');render();
+ setTimeout(()=>{[1,2,3].forEach(i=>stealFor(S.Ps[i]));render()},650)
+}
+function overflowDemo(){
+ let p=S.Ps[0];p.q=[];p.runnext=null;p.running=null;
+ for(let i=0;i<8;i++)p.q.push(newG(4));
+ log('Training queue filled on P0 (visual capacity=8; real runtime queue is larger)');
+ putLocal(p,newG(4),false);
+ $('flow').textContent='Local runq full → runqputslow → move batch from local queue + new G → global run queue';
+ render()
+}
+function globalDemo(){
+ S.global.push(newG(3),newG(3),newG(3));
+ log('Runtime-injection example: runnable Gs placed on global queue so idle Ps can discover work','yel');
+ $('flow').textContent='Global queue scenarios: local overflow/batching • injection without current P • injected work used to wake idle Ps • fairness checks';
+ render()
+}
+function blockDemo(){
+ S.Ps.forEach(p=>{if(p.m){S.blocked.push(p.m);log(`M${p.m} enters blocking syscall; P${p.id} detached`,'yel');p.m=null}});
+ $('flow').textContent='Blocking syscall: M blocks → P detached → spare/new M acquires P → runnable Go work continues';
+ render()
+}
+function render(){
+ let pe=$('ps');pe.innerHTML='';
+ S.Ps.forEach(p=>{
+  let e=document.createElement('div');e.className='pc';
+  e.innerHTML=`<div class="ph">P${p.id}<span>${p.m?'M'+p.m:'detached'}</span></div>
+  <div class="slot"><b>runnext:</b> ${p.runnext?chip(p.runnext):'—'}</div>
+  <div class="help">Local run queue</div><div class="queue">${p.q.map(g=>chip(g)).join('')}</div>
+  <div class="running">CPU: ${p.running?chip(p.running,'run'):'idle'}</div>`;pe.appendChild(e)
+ });
+ $('global').innerHTML=S.global.map(g=>chip(g)).join('');
+ $('netq').innerHTML=S.net.map(g=>chip(g,'io')).join('');
+ $('netready').innerHTML=S.netready.map(g=>chip(g)).join('');
+ $('blocked').innerHTML=S.blocked.map(m=>`<span class="mchip">M${m}</span>`).join('');
+ $('idle').innerHTML=S.idle.map(m=>`<span class="mchip">M${m}</span>`).join('');
+ let local=S.Ps.reduce((n,p)=>n+p.q.length+(p.runnext?1:0),0);
+ $('running').textContent=S.Ps.filter(p=>p.running).length;
+ $('runnable').textContent=local+S.global.length+S.netready.length;
+ $('iowait').textContent=S.net.length;$('blockedn').textContent=S.blocked.length;$('mcount').textContent=S.mCount;
+ $('gcount').textContent=local+S.global.length+S.net.length+S.netready.length+S.Ps.filter(p=>p.running).length
+}
+function reset(){
+ S.tick=0;S.nextG=1;S.global=[];S.net=[];S.netready=[];S.blocked=[];S.idle=[];S.mCount=4;
+ S.Ps.forEach((p,i)=>{p.m=i+1;p.runnext=null;p.q=[];p.running=null});$('log').innerHTML='';
+ // Seed via local queues, not global.
+ for(let i=0;i<20;i++){let p=S.Ps[i%4];if(!p.runnext)p.runnext=newG(2+Math.floor(Math.random()*4));else p.q.push(newG(2+Math.floor(Math.random()*4)))}
+ log('Reset: goroutines seeded into P-local runnable structures; global queue starts empty');
+ $('flow').textContent='Normal creation: running G → go f() → current P.runnext/local runq → M executes G';render()
+}
+$('play').onclick=()=>{S.playing=!S.playing;$('play').textContent=S.playing?'⏸ Pause':'▶ Auto Run'};
+$('step').onclick=tick;$('spawn').onclick=()=>spawn(8);$('steal').onclick=stealingDemo;$('netdemo').onclick=netDemo;
+$('overflow').onclick=overflowDemo;$('globaldemo').onclick=globalDemo;$('block').onclick=blockDemo;$('reset').onclick=reset;
+setInterval(()=>{if(S.playing)tick()},800);reset();
+</script></body></html>

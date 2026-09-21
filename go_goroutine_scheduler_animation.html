@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Go Runtime — Goroutine Scheduler & Netpoller Animation</title>
+<style>
+:root{
+  --bg:#07111f; --panel:#0d1b2d; --panel2:#10243b; --text:#e8f1ff; --muted:#91a8c4;
+  --line:#294664; --g:#56d6ff; --run:#6df0a5; --wait:#ffcf66; --io:#c98cff; --bad:#ff6b7a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#102944,#07111f 50%);color:var(--text);
+ font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+header{padding:20px 24px 10px;display:flex;gap:16px;justify-content:space-between;align-items:flex-start}
+h1{font-size:23px;margin:0 0 5px} .sub{color:var(--muted);font-size:13px;max-width:920px}
+.controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+button{background:#183653;color:white;border:1px solid #315675;border-radius:9px;padding:8px 12px;cursor:pointer}
+button:hover{background:#21496d}.active{outline:2px solid var(--g)}
+main{padding:10px 24px 30px}
+.stats{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:10px}
+.stat,.box{background:rgba(13,27,45,.94);border:1px solid var(--line);border-radius:12px}
+.stat{padding:9px;text-align:center}.stat b{display:block;font-size:18px}.stat span{font-size:11px;color:var(--muted)}
+.arch{display:grid;grid-template-columns:1fr 2.8fr 1fr;gap:10px}
+.box{padding:10px;min-height:112px}.title{font-weight:700;font-size:13px;margin-bottom:8px}
+.hint{font-size:11px;color:var(--muted)}
+.queue{display:flex;flex-wrap:wrap;gap:5px;min-height:44px;align-content:flex-start}
+.g{font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;border-radius:7px;padding:5px 7px;
+ background:#153653;border:1px solid #3d6c8e;color:#dff7ff;transition:.35s}
+.g.run{background:#174c3a;border-color:#47bd84}.g.io{background:#3c2854;border-color:#9363c4}
+.g.sys{background:#5b4520;border-color:#c99b45}.g.block{background:#552936;border-color:#c65b72}
+.center{display:grid;gap:10px}
+.global{min-height:82px}
+.ps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.p{background:#0b1726;border:1px solid #35526e;border-radius:11px;padding:8px;min-height:148px;position:relative}
+.phead{display:flex;justify-content:space-between;font-size:12px;font-weight:800;margin-bottom:7px}
+.phead span{color:var(--g)}
+.m{margin-top:8px;border-top:1px dashed #37506a;padding-top:7px;font-size:11px}
+.cpu{font-size:10px;color:var(--run)}
+.side{display:grid;gap:10px}
+.net{min-height:205px}.blocked{min-height:205px}
+.flow{margin:10px 0;background:#081625;border:1px solid var(--line);border-radius:12px;padding:10px}
+.flow strong{font-size:12px}.flowline{font:12px ui-monospace,monospace;color:#bcd0e7;margin-top:6px}
+.log{height:170px;overflow:auto;font:11px ui-monospace,monospace;background:#050c14;border:1px solid #243d56;
+ border-radius:10px;padding:8px;color:#a9c4df}.event{padding:2px 0}.event em{color:var(--run);font-style:normal}
+.legend{display:flex;gap:13px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin:8px 0}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px}
+.explain{margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.explain .box{font-size:12px;line-height:1.5}
+code{color:#9de1ff}
+@media(max-width:1000px){.arch{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}.ps{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+ <div><h1>Go Runtime Scheduler — 4 Ps, Goroutines, OS Threads & Netpoller</h1>
+ <div class="sub">Interactive conceptual animation of G-M-P scheduling: local/global run queues, work stealing,
+ network I/O parking/wakeup, syscall blocking, thread compensation, and return to steady state.</div></div>
+ <div class="controls">
+  <button id="play">▶ Play</button><button id="step">Step</button><button id="io">Inject Network I/O</button>
+  <button id="sys">Block All Ms</button><button id="burst">+24 Goroutines</button><button id="reset">Reset</button>
+ </div>
+</header>
+<main>
+ <div class="stats">
+  <div class="stat"><b id="ng">0</b><span>Goroutines</span></div>
+  <div class="stat"><b id="np">4</b><span>Ps / GOMAXPROCS</span></div>
+  <div class="stat"><b id="nm">8</b><span>OS Threads (Ms)</span></div>
+  <div class="stat"><b id="run">0</b><span>Running</span></div>
+  <div class="stat"><b id="runnable">0</b><span>Runnable</span></div>
+  <div class="stat"><b id="nio">0</b><span>Netpoll Wait</span></div>
+  <div class="stat"><b id="nsys">0</b><span>Syscall-blocked Ms</span></div>
+ </div>
+
+ <div class="legend">
+  <span><i class="dot" style="background:#56d6ff"></i>Runnable G</span>
+  <span><i class="dot" style="background:#6df0a5"></i>Running G</span>
+  <span><i class="dot" style="background:#c98cff"></i>Netpoll parked G</span>
+  <span><i class="dot" style="background:#ffcf66"></i>Syscall</span>
+ </div>
+
+ <div class="arch">
+  <div class="side">
+   <section class="box net"><div class="title">🌐 Netpoller</div><div class="hint">epoll / kqueue / IOCP-style readiness integration</div><div id="netq" class="queue"></div></section>
+   <section class="box"><div class="title">Ready From Netpoller</div><div class="hint">I/O-ready Gs become runnable again.</div><div id="ready" class="queue"></div></section>
+  </div>
+
+  <div class="center">
+   <section class="box global"><div class="title">🌍 Global Run Queue</div><div class="hint">Runnable work may enter here; Ps periodically sample it.</div><div id="global" class="queue"></div></section>
+   <div id="ps" class="ps"></div>
+  </div>
+
+  <div class="side">
+   <section class="box blocked"><div class="title">⛔ Ms Blocked in Syscalls</div><div class="hint">A P can detach from a blocked M and be handed to another/new M.</div><div id="blocked" class="queue"></div></section>
+   <section class="box"><div class="title">🧵 Idle / Spare Ms</div><div class="hint">Threads are runtime-managed; excess idle threads can eventually be retired.</div><div id="idlems" class="queue"></div></section>
+  </div>
+ </div>
+
+ <div class="flow">
+  <strong>Current flow</strong>
+  <div id="flow" class="flowline">G → Local Run Queue → P + M → CPU</div>
+ </div>
+ <div class="explain">
+  <section class="box"><b>Important: Ps are not created because threads block.</b><br/>
+  <code>GOMAXPROCS</code> determines how many Ps can execute Go code simultaneously. If an M blocks in a syscall,
+  its P can be detached and associated with another M. The runtime may create/wake an M so runnable Go work can continue.
+  This animation keeps <b>4 Ps</b> fixed while the M count changes.</section>
+  <section class="box"><b>Network I/O is different.</b><br/>
+  For pollable network descriptors, a goroutine is parked and the runtime's netpoller waits for readiness efficiently.
+  When ready, the G is made runnable and can re-enter scheduling. This avoids dedicating one blocked OS thread to every socket.</section>
+ </div>
+ <h3>Runtime Event Log</h3><div id="log" class="log"></div>
+</main>
+<script>
+const S={tick:0,nextG:1,playing:false,Ps:[],global:[],net:[],ready:[],blockedMs:[],idleMs:[],mCount:4};
+for(let i=0;i<4;i++) S.Ps.push({id:i,local:[],running:null,m:i+1});
+function G(){return {id:S.nextG++,state:'runnable',work:2+Math.floor(Math.random()*5)}}
+function addGs(n){for(let i=0;i<n;i++){let g=G(); if(i%4===0)S.global.push(g);else S.Ps[i%4].local.push(g)} log(`created ${n} goroutines`)}
+function log(x){let d=document.createElement('div');d.className='event';d.innerHTML=`t${S.tick}: <em>${x}</em>`;logEl.prepend(d)}
+const logEl=document.getElementById('log');
+function gel(g,cls=''){let e=document.createElement('span');e.className='g '+cls;e.textContent='G'+g.id;return e}
+function render(){
+ const ps=document.getElementById('ps');ps.innerHTML='';
+ S.Ps.forEach(p=>{
+  let e=document.createElement('section');e.className='p';
+  e.innerHTML=`<div class="phead">P${p.id}<span>${p.m?'M'+p.m:'no M'}</span></div><div class="hint">Local run queue</div>`;
+  let q=document.createElement('div');q.className='queue';p.local.forEach(g=>q.append(gel(g)));e.append(q);
+  let m=document.createElement('div');m.className='m';
+  m.innerHTML=p.running?`Executing ${gelHTML(p.running,'run')} <span class="cpu">→ CPU</span>`:`No G executing`;
+  e.append(m);ps.append(e);
+ });
+ fill('global',S.global);fill('netq',S.net,'io');fill('ready',S.ready);
+ let b=document.getElementById('blocked');b.innerHTML='';S.blockedMs.forEach(m=>{let x=document.createElement('span');x.className='g sys';x.textContent='M'+m;b.append(x)});
+ let im=document.getElementById('idlems');im.innerHTML='';S.idleMs.forEach(m=>{let x=document.createElement('span');x.className='g';x.textContent='M'+m;im.append(x)});
+ let all=S.global.length+S.net.length+S.ready.length;
+ S.Ps.forEach(p=>all+=p.local.length+(p.running?1:0));
+ ng.textContent=all; nm.textContent=S.mCount; run.textContent=S.Ps.filter(p=>p.running).length;
+ runnable.textContent=S.global.length+S.ready.length+S.Ps.reduce((a,p)=>a+p.local.length,0);
+ nio.textContent=S.net.length; nsys.textContent=S.blockedMs.length;
+}
+function gelHTML(g,c){return `<span class="g ${c}">G${g.id}</span>`}
+function fill(id,a,c=''){let e=document.getElementById(id);e.innerHTML='';a.forEach(g=>e.append(gel(g,c)))}
+function schedule(p){
+ if(!p.m)return;
+ if(!p.running){
+   if(p.local.length)p.running=p.local.shift();
+   else if(S.global.length)p.running=S.global.shift();
+   else if(S.ready.length)p.running=S.ready.shift();
+   else{
+    let donor=S.Ps.filter(x=>x.local.length>1).sort((a,b)=>b.local.length-a.local.length)[0];
+    if(donor){let n=Math.ceil(donor.local.length/2);p.local.push(...donor.local.splice(-n));log(`P${p.id} steals ${n} G(s) from P${donor.id}`);p.running=p.local.shift()}
+   }
+ }
+}
+function step(){
+ S.tick++;
+ // netpoll completion
+ if(S.net.length && Math.random()<.65){
+  let n=Math.min(S.net.length,1+Math.floor(Math.random()*4));
+  let xs=S.net.splice(0,n);S.ready.push(...xs);log(`netpoller reports ${n} descriptor(s) ready → Gs runnable`);
+  flow.textContent='Netpoller → I/O ready → runnable G → scheduler → P/M → CPU';
+ }
+ // return syscall Ms occasionally
+ if(S.blockedMs.length && Math.random()<.5){
+  let m=S.blockedMs.shift();S.idleMs.push(m);log(`M${m} returns from syscall; now spare/idle`);
+ }
+ // attach Ps without M
+ S.Ps.forEach(p=>{
+  if(!p.m){
+   let m=S.idleMs.shift();
+   if(!m){m=++S.mCount;log(`runtime creates M${m} because runnable work needs a thread`)}
+   p.m=m;log(`P${p.id} attached to M${m}`);
+  }
+ });
+ // execute
+ S.Ps.forEach(p=>{
+  schedule(p);
+  if(p.running){
+   p.running.work--;
+   if(p.running.work<=0){log(`G${p.running.id} completed on P${p.id}/M${p.m}`);p.running=null}
+   else if(Math.random()<.09){let g=p.running;p.running=null;S.net.push(g);log(`G${g.id} waits for network I/O → parked in netpoller`)}
+  }
+ });
+ // distribute net-ready work
+ while(S.ready.length){let p=S.Ps.slice().sort((a,b)=>a.local.length-b.local.length)[0];let g=S.ready.shift();p.local.push(g);log(`G${g.id} from netpoller placed on P${p.id} local queue`)}
+ // global fairness
+ if(S.global.length && S.tick%4===0){let p=S.Ps[S.tick%4];p.local.push(S.global.shift());log(`P${p.id} samples global run queue`)}
+ // conceptual thread retirement
+ if(S.idleMs.length>2 && S.tick%8===0){let m=S.idleMs.pop();S.mCount--;log(`excess idle M${m} retired (conceptual simplification)`)}
+ render();
+}
+function blockAll(){
+ S.Ps.forEach(p=>{
+  if(p.m){S.blockedMs.push(p.m);log(`M${p.m} blocks in syscall; P${p.id} detached`);p.m=null}
+ });
+ flow.textContent='M blocks in syscall → P detached → runtime wakes/creates M → P continues runnable Go work';
+ render();
+}
+function injectIO(){
+ let candidates=S.Ps.filter(p=>p.running);
+ if(!candidates.length){for(let i=0;i<Math.min(4,S.Ps.length);i++){let p=S.Ps[i];if(p.local.length)S.net.push(p.local.shift())}}
+ else candidates.slice(0,4).forEach(p=>{S.net.push(p.running);p.running=null});
+ log('goroutines parked for network I/O');flow.textContent='G → network operation not ready → netpoller → G parked';render();
+}
+function reset(){
+ S.tick=0;S.nextG=1;S.global=[];S.net=[];S.ready=[];S.blockedMs=[];S.idleMs=[];S.mCount=4;
+ S.Ps.forEach((p,i)=>{p.local=[];p.running=null;p.m=i+1});logEl.innerHTML='';addGs(28);render()
+}
+play.onclick=()=>{S.playing=!S.playing;play.textContent=S.playing?'⏸ Pause':'▶ Play';play.classList.toggle('active',S.playing)}
+document.getElementById('step').onclick=step;io.onclick=injectIO;sys.onclick=blockAll;
+burst.onclick=()=>{addGs(24);render()};document.getElementById('reset').onclick=reset;
+setInterval(()=>{if(S.playing)step()},700);
+reset();
+</script>
+</body></html>
